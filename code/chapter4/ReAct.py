@@ -1,6 +1,7 @@
 import re
 from llm_client import HelloAgentsLLM
 from tools import ToolExecutor, search
+from datetime import datetime
 
 # (此处省略 REACT_PROMPT_TEMPLATE 的定义)
 REACT_PROMPT_TEMPLATE = """
@@ -9,19 +10,62 @@ REACT_PROMPT_TEMPLATE = """
 可用工具如下：
 {tools}
 
+环境信息：
+当前时间: {time_context}
+
 请严格按照以下格式进行回应：
 
 Thought: 你的思考过程，用于分析问题、拆解任务和规划下一步行动。
 Action: 你决定采取的行动，必须是以下格式之一：
 - `{{tool_name}}[{{tool_input}}]`：调用一个可用工具。
 - `Finish[最终答案]`：当你认为已经获得最终答案时。
+
+请严格遵循要求：
 - 当你收集到足够的信息，能够回答用户的最终问题时，你必须在`Action:`字段后使用 `Finish[最终答案]` 来输出最终答案。
+- 每次最多只返回一个`Thought`内块和一个`Action`内容块。
 
 
 现在，请开始解决以下问题：
 Question: {question}
 History: {history}
 """
+
+def get_semantic_time(dt: datetime = None) -> str:
+    """生成语义化、低变化频率的时间字符串，利于缓存命中"""
+    if dt is None:
+        dt = datetime.now()
+
+    # 日期部分
+    weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    date_str = f"{dt.year}年{dt.month}月{dt.day}日（{weekdays[dt.weekday()]}）"
+
+    # 时段部分（粗粒度，减少缓存失效）
+    hour = dt.hour
+    if 5 <= hour < 9:
+        period = "早晨"
+    elif 9 <= hour < 12:
+        period = "上午"
+    elif 12 <= hour < 14:
+        period = "中午"
+    elif 14 <= hour < 18:
+        period = "下午"
+    elif 18 <= hour < 22:
+        period = "晚上"
+    else:
+        period = "深夜"
+
+    # 季度/月份语义（可选，适合长期规划类 Agent）
+    month = dt.month
+    if 1 <= month <= 3:
+        quarter = "Q1"
+    elif 4 <= month <= 6:
+        quarter = "Q2"
+    elif 7 <= month <= 9:
+        quarter = "Q3"
+    else:
+        quarter = "Q4"
+
+    return f"{date_str}{period}（{quarter}）"
 
 class ReActAgent:
     def __init__(self, llm_client: HelloAgentsLLM, tool_executor: ToolExecutor, max_steps: int = 5):
@@ -40,7 +84,8 @@ class ReActAgent:
 
             tools_desc = self.tool_executor.getAvailableTools()
             history_str = "\n".join(self.history)
-            prompt = REACT_PROMPT_TEMPLATE.format(tools=tools_desc, question=question, history=history_str)
+            time_context = get_semantic_time()
+            prompt = REACT_PROMPT_TEMPLATE.format(time_context=time_context, tools=tools_desc, question=question, history=history_str)
 
             messages = [{"role": "user", "content": prompt}]
             response_text = self.llm_client.think(messages=messages)
@@ -97,3 +142,5 @@ if __name__ == '__main__':
     agent = ReActAgent(llm_client=llm, tool_executor=tool_executor)
     question = "华为最新的手机是哪一款？它的主要卖点是什么？"
     agent.run(question)
+
+
